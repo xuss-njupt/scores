@@ -1,0 +1,13 @@
+project_id = "hwxsuieolykxfgjxitra"
+
+[api]
+enabled = true
+schemas = ["public", "graphql_public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[functions.scores-admin]
+verify_jwt = true
+
+[functions.student-activate]
+verify_jwt = false
