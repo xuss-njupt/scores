@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { withSupabase } from "npm:@supabase/server";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,12 +7,6 @@ const corsHeaders = {
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { ...corsHeaders, "Content-Type": "application/json" },
-});
-const supabaseUrl = Deno.env.get("SUPABASE_URL");
-const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-if (!supabaseUrl || !serviceRoleKey) throw new Error("Missing Supabase server environment");
-const admin = createClient(supabaseUrl, serviceRoleKey, {
-  auth: { persistSession: false, autoRefreshToken: false },
 });
 async function sha256(input: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
@@ -25,10 +19,11 @@ async function studentEmail(studentNo: string) {
 function validPassword(value: unknown): value is string {
   return typeof value === "string" && value.length >= 10 && value.length <= 128;
 }
-Deno.serve(async (req: Request) => {
+Deno.serve(withSupabase({ auth: "none" }, async (req: Request, ctx) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
   try {
+    const admin = ctx.supabaseAdmin;
     const body = await req.json();
     const studentNo = String(body.student_no ?? "").trim().toUpperCase();
     const fullName = String(body.full_name ?? "").trim();
@@ -75,4 +70,4 @@ Deno.serve(async (req: Request) => {
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "服务器内部错误" }, 400);
   }
-});
+}));

@@ -1,4 +1,4 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { withSupabase } from "npm:@supabase/server";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -7,12 +7,6 @@ const corsHeaders = {
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { ...corsHeaders, "Content-Type": "application/json" },
-});
-const supabaseUrl = Deno.env.get("SUPABASE_URL");
-const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
-if (!supabaseUrl || !serviceRoleKey) throw new Error("Missing Supabase server environment");
-const admin = createClient(supabaseUrl, serviceRoleKey, {
-  auth: { persistSession: false, autoRefreshToken: false },
 });
 function randomCode(bytes = 18) {
   const data = crypto.getRandomValues(new Uint8Array(bytes));
@@ -25,22 +19,17 @@ async function sha256(input: string) {
 function validPassword(value: unknown): value is string {
   return typeof value === "string" && value.length >= 10 && value.length <= 128;
 }
-async function authorize(req: Request) {
-  const authorization = req.headers.get("Authorization") ?? "";
-  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
-  if (!token) throw new Error("请先登录");
-  const { data, error } = await admin.auth.getUser(token);
-  if (error || !data.user) throw new Error("登录状态无效，请重新登录");
-  const { data: profile, error: profileError } = await admin
-    .from("profiles").select("id, role, full_name").eq("id", data.user.id).single();
-  if (profileError || !profile) throw new Error("账号资料不存在");
-  return { user: data.user, profile };
-}
-Deno.serve(async (req: Request) => {
+Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
   try {
-    const { user, profile } = await authorize(req);
+    const admin = ctx.supabaseAdmin;
+    const userId = ctx.userClaims?.sub;
+    if (!userId) return json({ error: "请先登录" }, 401);
+    const { data: profile, error: profileError } = await admin
+      .from("profiles").select("id, role, full_name").eq("id", userId).single();
+    if (profileError || !profile) return json({ error: "账号资料不存在" }, 403);
+    const user = { id: userId };
     const body = await req.json();
     const action = body?.action;
 
@@ -161,4 +150,4 @@ Deno.serve(async (req: Request) => {
   } catch (error) {
     return json({ error: error instanceof Error ? error.message : "服务器内部错误" }, 401);
   }
-});
+}));

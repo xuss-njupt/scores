@@ -59,7 +59,9 @@
     insert into public.profiles (id, role, full_name)
     values ('AUTH_USER_UUID'::uuid, 'admin', '系统管理员');
 
-只执行一次。之后登录网站，超级管理员可以在后台创建教师账号。不要给普通教师或学生分配 admin 角色。\n\n同时请到 Supabase Dashboard → Authentication → Settings，将 Allow new users to sign up（允许新用户注册）关闭。网站不会提供公开注册入口；教师通过管理员创建，学生通过一次性激活码建立账号。
+只执行一次。之后登录网站，超级管理员可以在后台创建教师账号。不要给普通教师或学生分配 admin 角色。
+
+同时请到 Supabase Dashboard → Authentication → Settings，将 Allow new users to sign up（允许新用户注册）关闭。网站不会提供公开注册入口；教师通过管理员创建，学生通过一次性激活码建立账号。
 
 ## 4. Edge Functions
 
@@ -68,7 +70,7 @@
 - **scores-admin**：要求有效登录 JWT；在服务端校验数据库角色后，执行教师账号创建、学生导入与激活码签发、密码重置、密码修改和成绩发布。
 - **student-activate**：允许未登录用户调用，但必须同时验证学号、姓名、一次性激活码与有效期。激活码为高熵随机值，数据库只保存 SHA-256 摘要，且激活后即失效。
 
-Supabase 托管 Edge Functions 会自动提供服务端密钥环境变量。不要把密钥复制到源码或前端变量。
+两个函数使用 Supabase 官方 @supabase/server SDK：登录后管理操作由 SDK 验证用户身份，学生首次激活由独立公开入口验证高熵激活码。SDK 从 Supabase 托管环境自动读取服务端 Secret Key。不要把密钥复制到源码、GitHub 或前端变量。
 
 ## 5. Excel 格式
 
