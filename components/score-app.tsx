@@ -50,19 +50,14 @@ function headerIndex(headers: string[], candidates: string[]) {
 
 async function readWorkbook(file: File) {
   if (file.size > 10 * 1024 * 1024) throw new Error("Excel 文件不能超过 10 MB。");
-  const ExcelJS = await import("exceljs");
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(await file.arrayBuffer());
-  const sheet = workbook.worksheets[0];
-  if (!sheet || sheet.rowCount < 2) throw new Error("Excel 文件没有可读取的数据。");
-  const headers = (sheet.getRow(1).values as unknown[]).slice(1).map(readCell);
+  const { readSheet } = await import("read-excel-file/browser");
+  const data = await readSheet(file, { sheet: 1 });
+  if (!data || data.length < 2) throw new Error("Excel 文件没有可读取的数据。");
+  const headers = (data[0] ?? []).map(readCell);
   if (headers.every((item) => !item)) throw new Error("Excel 第一行必须是字段名称。");
-  const rows: string[][] = [];
-  for (let rowNo = 2; rowNo <= sheet.rowCount; rowNo += 1) {
-    const row = sheet.getRow(rowNo);
-    const values = headers.map((_, column) => readCell(row.getCell(column + 1).value));
-    if (values.some((item) => item !== "")) rows.push(values);
-  }
+  const rows = data.slice(1)
+    .map((row) => headers.map((_, column) => readCell(row[column] ?? null)))
+    .filter((row) => row.some((item) => item !== ""));
   return { headers, rows };
 }
 
@@ -526,11 +521,11 @@ function ClassWorkspace({ classroom, profile, onBack, onNotice }: { classroom: C
       <div className="import-grid">
         <section className="panel import-panel">
           <div className="panel-title"><div><h2>导入学生名单</h2><p>Excel 表格需包含学号、姓名两列。</p></div><span className="panel-icon">名</span></div>
-          <label className="upload-zone"><span className="upload-symbol">↑</span><strong>选择学生名单 Excel</strong><small>支持 .xlsx / .xls，最大 10 MB</small><input type="file" accept=".xlsx,.xls" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importStudents(file); event.currentTarget.value = ""; }} /></label>
+          <label className="upload-zone"><span className="upload-symbol">↑</span><strong>选择学生名单 Excel</strong><small>仅支持 .xlsx，最大 10 MB；旧版 .xls 请先另存为 .xlsx</small><input type="file" accept=".xlsx" disabled={busy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importStudents(file); event.currentTarget.value = ""; }} /></label>
         </section>
         <section className="panel import-panel">
           <div className="panel-title"><div><h2>导入考试成绩</h2><p>学号、姓名之外的每一列作为一项考试。</p></div><span className="panel-icon">分</span></div>
-          <label className="upload-zone"><span className="upload-symbol">↑</span><strong>选择成绩 Excel</strong><small>例如课堂测试、阶段考试、期中考试</small><input type="file" accept=".xlsx,.xls" disabled={busy || !students.length} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importScores(file); event.currentTarget.value = ""; }} /></label>
+          <label className="upload-zone"><span className="upload-symbol">↑</span><strong>选择成绩 Excel</strong><small>例如课堂测试、阶段考试、期中考试</small><input type="file" accept=".xlsx" disabled={busy || !students.length} onChange={(event) => { const file = event.target.files?.[0]; if (file) void importScores(file); event.currentTarget.value = ""; }} /></label>
         </section>
       </div>
 

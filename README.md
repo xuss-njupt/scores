@@ -13,7 +13,7 @@
 
 - Next.js 16.4.6 / React 19.3.1 / TypeScript
 - Supabase Auth / PostgreSQL / Row Level Security / Edge Functions
-- ExcelJS（浏览器端读取 Excel 文件）
+- read-excel-file 9.3.20（浏览器端安全读取 .xlsx）
 - Vercel（建议）+ GitHub
 
 ## 1. 本地运行
@@ -96,7 +96,7 @@
 
 导入时按学号匹配本班学生，空白成绩跳过。每个成绩列创建一条考试记录。导入后默认未发布，教师确认无误后逐项点击“发布”，学生才可以查询。
 
-建议成绩表中使用数值单元格，不要把“缺考”“优秀”等文本写入分数列。
+建议成绩表中使用数值单元格，不要把“缺考”“优秀”等文本写入分数列。\n\n当前导入器支持 .xlsx。旧版二进制 .xls 文件请先用 Excel 或 WPS 另存为 .xlsx；学号建议在表格中设置为文本格式，以保留前导零。
 
 ## 6. 部署到 Vercel
 
