@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
@@ -17,23 +17,9 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - name: Generate npm lockfile
-        run: npm install --package-lock-only
-      - name: Commit generated lockfile
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/feat/')
-        run: |
-          if [ -n "$(git status --porcelain package-lock.json)" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add package-lock.json
-            git commit -m "chore: lock npm dependencies"
-            git push origin "HEAD:$GITHUB_REF_NAME"
-          fi
       - run: npm ci
-      - name: Dependency audit summary
-        run: |
-          npm audit --json > "$RUNNER_TEMP/npm-audit.json" || true
-          node -e 'const a=require(process.env.RUNNER_TEMP + "/npm-audit.json"); for (const [name, v] of Object.entries(a.vulnerabilities || {})) console.log(name + ": " + v.severity + ", fix=" + JSON.stringify(v.fixAvailable));'
+      - name: Audit dependencies
+        run: npm audit --audit-level=moderate
       - run: npm run typecheck
         env:
           NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
