@@ -51,7 +51,7 @@ function headerIndex(headers: string[], candidates: string[]) {
 async function readWorkbook(file: File) {
   if (file.size > 10 * 1024 * 1024) throw new Error("Excel 文件不能超过 10 MB。");
   const { readSheet } = await import("read-excel-file/browser");
-  const data = await readSheet(file, { sheet: 1 });
+  const data = await readSheet(file, 1);
   if (!data || data.length < 2) throw new Error("Excel 文件没有可读取的数据。");
   const headers = (data[0] ?? []).map(readCell);
   if (headers.every((item) => !item)) throw new Error("Excel 第一行必须是字段名称。");
