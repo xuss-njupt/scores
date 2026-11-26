@@ -19,6 +19,10 @@ async function sha256(input: string) {
 function validPassword(value: unknown): value is string {
   return typeof value === "string" && value.length >= 10 && value.length <= 128;
 }
+async function studentEmail(studentNo: string) {
+  const hash = await sha256(studentNo.trim().toUpperCase());
+  return "student-" + hash.slice(0, 40) + "@students.scores.invalid";
+}
 Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
@@ -73,9 +77,11 @@ Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
       if (profile.role !== "admin" && classroom.teacher_id !== user.id) return json({ error: "不能管理其他教师的班级" }, 403);
 
       const activation: Array<{ student_no: string; full_name: string; activation_code: string; expires_at: string }> = [];
+      let passwordAccounts = 0;
       for (const row of rows) {
         const studentNo = String(row.student_no ?? "").trim().toUpperCase();
         const fullName = String(row.full_name ?? "").trim();
+        const initialPassword = String(row.initial_password ?? "").trim();
         if (!studentNo || !fullName || studentNo.length > 64 || fullName.length > 100) {
           return json({ error: "学生学号或姓名为空，或长度超限" }, 400);
         }
@@ -83,13 +89,41 @@ Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
           .select("id, role").eq("student_no", studentNo).maybeSingle();
         if (existingError) return json({ error: existingError.message }, 400);
         if (existingProfile && existingProfile.role !== "student") return json({ error: "学号 " + studentNo + " 已被非学生账号使用" }, 409);
+        if (!existingProfile && initialPassword && !validPassword(initialPassword)) {
+          return json({ error: "学号 " + studentNo + " 的初始密码至少10位，最多128位" }, 400);
+        }
 
         const { error: upsertError } = await admin.from("students").upsert({
           class_id: classId, student_no: studentNo, full_name: fullName, profile_id: existingProfile?.id ?? null,
         }, { onConflict: "class_id,student_no" });
         if (upsertError) return json({ error: "导入 " + studentNo + " 失败：" + upsertError.message }, 400);
 
-        if (!existingProfile) {
+        if (!existingProfile && initialPassword) {
+          const { error: removeInviteError } = await admin.from("student_invites")
+            .delete().eq("student_no", studentNo).is("consumed_at", null);
+          if (removeInviteError) return json({ error: removeInviteError.message }, 400);
+          const email = await studentEmail(studentNo);
+          const { data: created, error: createError } = await admin.auth.admin.createUser({
+            email, password: initialPassword, email_confirm: true,
+          });
+          if (createError || !created.user) return json({ error: "为 " + studentNo + " 创建账号失败：" + (createError?.message ?? "未知错误") }, 400);
+          const { error: profileInsertError } = await admin.from("profiles").insert({
+            id: created.user.id, role: "student", full_name: fullName,
+            student_no: studentNo, must_change_password: true,
+          });
+          if (profileInsertError) {
+            await admin.auth.admin.deleteUser(created.user.id);
+            return json({ error: "保存 " + studentNo + " 的账号资料失败：" + profileInsertError.message }, 400);
+          }
+          const { error: enrollmentError } = await admin.from("students").update({ profile_id: created.user.id })
+            .eq("class_id", classId).eq("student_no", studentNo);
+          if (enrollmentError) {
+            await admin.from("profiles").delete().eq("id", created.user.id);
+            await admin.auth.admin.deleteUser(created.user.id);
+            return json({ error: "关联 " + studentNo + " 的班级记录失败：" + enrollmentError.message }, 400);
+          }
+          passwordAccounts += 1;
+        } else if (!existingProfile) {
           const activationCode = randomCode();
           const codeHash = await sha256(activationCode);
           const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
@@ -104,7 +138,7 @@ Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
           activation.push({ student_no: studentNo, full_name: fullName, activation_code: activationCode, expires_at: expiresAt });
         }
       }
-      return json({ ok: true, imported: rows.length, activation });
+      return json({ ok: true, imported: rows.length, password_accounts: passwordAccounts, activation });
     }
 
     if (action === "reset_student_password") {

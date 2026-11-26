@@ -433,19 +433,21 @@ function ClassWorkspace({ classroom, profile, onBack, onNotice }: { classroom: C
       const { headers, rows } = await readWorkbook(file);
       const noIndex = headerIndex(headers, ["学号", "studentno", "studentid", "学号（必填）"]);
       const nameIndex = headerIndex(headers, ["姓名", "name", "studentname"]);
-      if (noIndex < 0 || nameIndex < 0) throw new Error("学生名单必须包含“学号”和“姓名”两列。");
+      const passwordIndex = headerIndex(headers, ["密码", "初始密码", "password", "initialpassword"]);
+      if (noIndex < 0 || nameIndex < 0) throw new Error("学生名单必须包含“学号”和“姓名”两列；“密码”列可选。");
       const parsed = rows.map((row) => ({
         student_no: (row[noIndex] ?? "").trim().toUpperCase(),
         full_name: (row[nameIndex] ?? "").trim(),
+        initial_password: passwordIndex >= 0 ? (row[passwordIndex] ?? "").trim() : "",
       })).filter((row) => row.student_no && row.full_name);
       if (!parsed.length) throw new Error("没有找到有效学生记录。");
       const uniqueNos = new Set(parsed.map((row) => row.student_no));
       if (uniqueNos.size !== parsed.length) throw new Error("学生名单中存在重复学号，请先在 Excel 中去重后再导入。");
-      const result = await adminAction<{ imported: number; activation: typeof activationRows }>("import_students", {
+      const result = await adminAction<{ imported: number; password_accounts: number; activation: typeof activationRows }>("import_students", {
         class_id: classroom.id, students: parsed,
       });
       setActivationRows(result.activation ?? []);
-      onNotice({ kind: "success", text: "已导入 " + result.imported + " 条学生记录。" + (result.activation?.length ? " 新账号激活码请立即导出并安全发给学生。" : " 已激活学生的密码没有改变。") });
+      onNotice({ kind: "success", text: "已导入 " + result.imported + " 条学生记录。" + (result.password_accounts ? " 其中 " + result.password_accounts + " 个新账号使用了 Excel 初始密码，学生首次登录必须改密。" : "") + (result.activation?.length ? " 其余无密码学生的激活码请立即导出并安全发给学生。" : "") + " 已激活账号的密码不会被重复导入覆盖。" });
       await loadClass();
     } catch (error) {
       onNotice({ kind: "error", text: showError(error) });
