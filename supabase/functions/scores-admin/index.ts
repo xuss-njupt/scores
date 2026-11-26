@@ -24,7 +24,7 @@ Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
   if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
   try {
     const admin = ctx.supabaseAdmin;
-    const userId = ctx.userClaims?.sub;
+    const userId = ctx.userClaims?.id;
     if (!userId) return json({ error: "请先登录" }, 401);
     const { data: profile, error: profileError } = await admin
       .from("profiles").select("id, role, full_name").eq("id", userId).single();
