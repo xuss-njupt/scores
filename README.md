@@ -14,7 +14,7 @@
 - Next.js 16.4.6 / React 19.3.1 / TypeScript
 - Supabase Auth / PostgreSQL / Row Level Security / Edge Functions
 - read-excel-file 9.3.20（浏览器端安全读取 .xlsx）
-- Vercel（建议）+ GitHub
+- Netlify（网站托管）+ GitHub Actions（持续集成）
 
 ## 1. 本地运行
 
@@ -100,12 +100,34 @@
 
 当前导入器支持 .xlsx。旧版二进制 .xls 文件请先用 Excel 或 WPS 另存为 .xlsx；学号建议在表格中设置为文本格式，以保留前导零。
 
-## 6. 部署到 Vercel
+## 6. 部署到 Netlify（不使用 Vercel）
 
-1. 在 Vercel 选择 Add New → Project，导入 xuss-njupt/scores 仓库。
-2. Framework 选择 Next.js。
-3. 配置环境变量 NEXT_PUBLIC_SUPABASE_URL 和 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY。
-4. 部署。后续推送到 main 会触发 Vercel 自动构建（需在 Vercel 仓库设置中启用自动部署）。
+本项目使用 Next.js App Router，不能使用 GitHub Pages 这类纯静态托管。Netlify 通过官方 OpenNext adapter 运行 Next.js 服务端渲染、Route Handlers 和 Server Actions。
+
+### 推荐部署方式：连接 GitHub 仓库
+
+1. 登录 https://app.netlify.com/ ，选择 Add new project → Import an existing project。
+2. 选择 GitHub，授权 Netlify 访问 `xuss-njupt/scores`。
+3. 选择仓库和 `main` 分支。
+4. 构建设置：
+   - Build command：`npm run build`
+   - Publish directory：`.next`
+   - Node version：`22`
+   - Base directory：留空（仓库根目录）
+5. 在 Site configuration → Environment variables 添加：
+   - `NEXT_PUBLIC_SUPABASE_URL` = Supabase 项目 URL
+   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` = Supabase Publishable Key
+6. 触发部署。后续推送到 `main` 会自动重新构建和发布。
+
+仓库根目录的 `netlify.toml` 已声明构建命令、发布目录和 Node.js 版本。Netlify 会自动检测 Next.js 并启用 OpenNext adapter，无需将应用改成静态导出。
+
+### 上线后检查
+
+- 确认 Netlify 生产域名可公开打开，不启用 Netlify 访问密码或团队 SSO 保护。
+- 检查登录、退出、首次学生激活、首次改密、管理员创建教师、教师导入学生、导入成绩、发布成绩、学生查询成绩。
+- 检查 Supabase Authentication 的 Site URL 和 Redirect URLs，加入 Netlify 生产域名（如 `https://your-site.netlify.app`）。
+- 确认浏览器网络请求只包含 Publishable Key；Supabase Secret Key / service_role 绝不能放在前端环境变量。
+- 网站可以公开访问，但成绩数据必须登录后才能读取。
 
 网站可以公开访问，但成绩数据必须登录后才能读取。不要把成绩表或学生名单发布到公开 Storage Bucket。
 
