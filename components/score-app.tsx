@@ -669,7 +669,7 @@ export default function ScoreApp() {
     return (
       <div className="app-background">
         <div className="public-header"><div className="brand"><div className="brand-mark">分</div><div><strong>校园成绩平台</strong><span>Academic Score Portal</span></div></div><span className="public-label">SECURE ACCESS</span></div>
-        {configError ? <div className="config-error"><strong>尚未配置 Supabase</strong><p>{configError}</p><span>请在本地 .env.local 或 Vercel 环境变量中填写项目 URL 和 Publishable Key。</span></div> : <LoginPanel onNotice={setNotice} />}
+        {configError ? <div className="config-error"><strong>尚未配置 Supabase</strong><p>{configError}</p><span>请在 GitHub Actions 构建环境中配置 Supabase 项目 URL 和 Publishable Key。</span></div> : <LoginPanel onNotice={setNotice} />}
         <div className="notice-holder"><NoticeBar notice={notice} onClose={() => setNotice(null)} /></div>
         <footer className="site-footer">校园成绩查询平台 · 安全、准确、可追溯</footer>
       </div>
