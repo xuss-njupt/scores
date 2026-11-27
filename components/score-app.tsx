@@ -99,8 +99,13 @@ function AppHeader({ profile, onLogout }: { profile: Profile; onLogout: () => vo
 }
 
 function LoginPanel({ onNotice }: { onNotice: (notice: Notice) => void }) {
-  const [mode, setMode] = useState<"staff" | "student" | "activate">("staff");
+  const [mode, setMode] = useState<"staff" | "student" | "activate" | "register">("staff");
   const [identity, setIdentity] = useState("");
+  const [fullName, setFullName] = useState("");
+  const [employeeNo, setEmployeeNo] = useState("");
+  const [registerEmail, setRegisterEmail] = useState("");
+  const [registerPassword, setRegisterPassword] = useState("");
+  const [registerConfirm, setRegisterConfirm] = useState("");
   const [password, setPassword] = useState("");
   const [studentNo, setStudentNo] = useState("");
   const [studentName, setStudentName] = useState("");
@@ -118,6 +123,51 @@ function LoginPanel({ onNotice }: { onNotice: (notice: Notice) => void }) {
       if (error) throw error;
     } catch (error) {
       onNotice({ kind: "error", text: showError(error) });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function registerTeacher(event: React.FormEvent) {
+    event.preventDefault();
+    if (registerPassword.length < 10) {
+      onNotice({ kind: "error", text: "密码至少需要10位。" });
+      return;
+    }
+    if (registerPassword !== registerConfirm) {
+      onNotice({ kind: "error", text: "两次输入的密码不一致。" });
+      return;
+    }
+    setBusy(true);
+    try {
+      const { data, error } = await getSupabase().auth.signUp({
+        email: registerEmail.trim().toLowerCase(),
+        password: registerPassword,
+        options: {
+          data: {
+            signup_type: "teacher",
+            full_name: fullName.trim(),
+            employee_no: employeeNo.trim(),
+          },
+        },
+      });
+      if (error) throw error;
+      setMode("staff");
+      setIdentity(registerEmail.trim().toLowerCase());
+      setPassword("");
+      setFullName("");
+      setEmployeeNo("");
+      setRegisterEmail("");
+      setRegisterPassword("");
+      setRegisterConfirm("");
+      onNotice({
+        kind: "success",
+        text: data.session
+          ? "教师账号注册成功，已自动登录。"
+          : "注册申请已提交，请按照邮件提示完成邮箱验证后登录。",
+      });
+    } catch {
+      onNotice({ kind: "error", text: "注册未能完成，请检查填写信息或稍后重试。" });
     } finally {
       setBusy(false);
     }
@@ -174,10 +224,22 @@ function LoginPanel({ onNotice }: { onNotice: (notice: Notice) => void }) {
       <section className="login-card">
         <div className="card-heading">
           <div className="eyebrow">WELCOME BACK</div>
-          <h2>{mode === "activate" ? "首次激活学生账号" : "登录成绩平台"}</h2>
-          <p>{mode === "activate" ? "请使用教师发放的一次性激活码创建个人密码。" : "请选择账号类型并输入登录信息。"}</p>
+          <h2>{mode === "activate" ? "首次激活学生账号" : mode === "register" ? "教师注册" : "登录成绩平台"}</h2>
+          <p>{mode === "activate" ? "请使用教师发放的一次性激活码创建个人密码。" : mode === "register" ? "填写基本信息，创建教师账号。" : "请选择账号类型并输入登录信息。"}</p>
         </div>
-        {mode !== "activate" ? (
+        {mode === "register" ? (
+          <>
+            <form onSubmit={registerTeacher} className="form-stack">
+              <label>姓名<input value={fullName} onChange={(event) => setFullName(event.target.value)} autoComplete="name" required placeholder="请输入姓名" /></label>
+              <label>工号<input value={employeeNo} onChange={(event) => setEmployeeNo(event.target.value)} autoComplete="off" required placeholder="请输入工号" /></label>
+              <label>邮箱<input type="email" value={registerEmail} onChange={(event) => setRegisterEmail(event.target.value)} autoComplete="email" required placeholder="请输入常用邮箱" /></label>
+              <label>设置密码<input type="password" value={registerPassword} onChange={(event) => setRegisterPassword(event.target.value)} minLength={10} autoComplete="new-password" required placeholder="至少10位" /></label>
+              <label>确认密码<input type="password" value={registerConfirm} onChange={(event) => setRegisterConfirm(event.target.value)} minLength={10} autoComplete="new-password" required placeholder="再次输入密码" /></label>
+              <button className="button button-primary button-full" disabled={busy}>{busy ? "正在提交…" : "注册教师账号"}</button>
+            </form>
+            <button className="text-button" onClick={() => setMode("staff")}>返回登录</button>
+          </>
+        ) : mode !== "activate" ? (
           <>
             <div className="segmented">
               <button className={mode === "staff" ? "active" : ""} onClick={() => setMode("staff")}>教师 / 管理员</button>
@@ -193,7 +255,7 @@ function LoginPanel({ onNotice }: { onNotice: (notice: Notice) => void }) {
               <button className="button button-primary button-full" disabled={busy}>{busy ? "正在登录…" : "登录"}</button>
             </form>
             {mode === "student" && <button className="text-button" onClick={() => setMode("activate")}>首次使用？使用激活码设置密码</button>}
-            {mode === "staff" && <p className="form-footnote">教师账号由学校超级管理员创建，不开放公开注册。</p>}
+            {mode === "staff" && <button className="text-button" onClick={() => setMode("register")}>教师注册</button>}
           </>
         ) : (
           <>
@@ -447,7 +509,7 @@ function ClassWorkspace({ classroom, profile, onBack, onNotice }: { classroom: C
         class_id: classroom.id, students: parsed,
       });
       setActivationRows(result.activation ?? []);
-      onNotice({ kind: "success", text: "已导入 " + result.imported + " 条学生记录。" + (result.password_accounts ? " 其中 " + result.password_accounts + " 个新账号使用了 Excel 初始密码，学生首次登录必须改密。" : "") + (result.activation?.length ? " 其余无密码学生的激活码请立即导出并安全发给学生。" : "") + " 已激活账号的密码不会被重复导入覆盖。" });
+      onNotice({ kind: "success", text: "已导入 " + result.imported + " 条学生记录。" + (result.password_accounts ? " 其中 " + result.password_accounts + " 个新账号已设置 Excel 初始密码，可直接登录。" : "") + (result.activation?.length ? " 其余无密码学生的激活码请立即导出并安全发给学生。" : "") + " 已激活账号的密码不会被重复导入覆盖。" });
       await loadClass();
     } catch (error) {
       onNotice({ kind: "error", text: showError(error) });
