@@ -109,7 +109,7 @@ Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
           if (createError || !created.user) return json({ error: "为 " + studentNo + " 创建账号失败：" + (createError?.message ?? "未知错误") }, 400);
           const { error: profileInsertError } = await admin.from("profiles").insert({
             id: created.user.id, role: "student", full_name: fullName,
-            student_no: studentNo, must_change_password: true,
+            student_no: studentNo, must_change_password: false,
           });
           if (profileInsertError) {
             await admin.auth.admin.deleteUser(created.user.id);
@@ -153,7 +153,7 @@ Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
       if (!student.profile_id) return json({ error: "该学生尚未激活账号，请重新生成激活码" }, 409);
       const { error: authError } = await admin.auth.admin.updateUserById(student.profile_id, { password });
       if (authError) return json({ error: authError.message }, 400);
-      const { error: profileError } = await admin.from("profiles").update({ must_change_password: true }).eq("id", student.profile_id);
+      const { error: profileError } = await admin.from("profiles").update({ must_change_password: false }).eq("id", student.profile_id);
       if (profileError) return json({ error: profileError.message }, 400);
       return json({ ok: true });
     }
