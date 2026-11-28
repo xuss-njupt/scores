@@ -39,30 +39,48 @@ Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
 
     if (action === "create_teacher") {
       if (profile.role !== "admin") return json({ error: "仅超级管理员可以创建教师账号" }, 403);
-      const email = String(body.email ?? "").trim().toLowerCase();
+      const employeeNo = String(body.employee_no ?? "").trim();
       const fullName = String(body.full_name ?? "").trim();
       const password = body.password;
-      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !fullName || fullName.length > 100 || email.endsWith("@students.scores.invalid") || !validPassword(password)) {
-        return json({ error: "请提供有效邮箱、教师姓名和至少10位初始密码" }, 400);
+      if (!/^20[0-9]{6}$/.test(employeeNo) || !fullName || fullName.length > 100 || !validPassword(password)) {
+        return json({ error: "请核对工号、教师姓名和初始密码" }, 400);
       }
-      const { data: created, error: createError } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
-      if (createError || !created.user) return json({ error: createError?.message ?? "创建认证账号失败" }, 400);
-      const { error: insertError } = await admin.from("profiles").insert({
-        id: created.user.id, role: "teacher", full_name: fullName, must_change_password: true,
+      const email = "teacher-" + crypto.randomUUID() + "@teachers.scores.invalid";
+      const { data, error } = await admin.auth.admin.createUser({
+        email, password, email_confirm: true,
+        app_metadata: { signup_type: "teacher", full_name: fullName, employee_no: employeeNo },
       });
-      if (insertError) {
-        await admin.auth.admin.deleteUser(created.user.id);
-        return json({ error: "创建教师资料失败：" + insertError.message }, 400);
-      }
-      return json({ ok: true, teacher: { id: created.user.id, email, full_name: fullName } });
+      if (error || !data.user) return json({ error: "教师账号创建失败，请核对工号是否已注册" }, 400);
+      return json({ ok: true, teacher: { id: data.user.id, employee_no: employeeNo, full_name: fullName } });
     }
 
     if (action === "list_teachers") {
       if (profile.role !== "admin") return json({ error: "无权查看教师列表" }, 403);
-      const { data, error } = await admin.from("profiles")
-        .select("id, full_name, created_at").eq("role", "teacher").order("created_at", { ascending: false });
-      if (error) return json({ error: error.message }, 400);
-      return json({ teachers: data ?? [] });
+      const teachers = [];
+      for (let offset = 0; ; offset += 500) {
+        const { data, error } = await admin.from("profiles")
+          .select("id, full_name, employee_no, created_at").eq("role", "teacher")
+          .order("created_at", { ascending: false }).order("id").range(offset, offset + 499);
+        if (error) return json({ error: error.message }, 400);
+        teachers.push(...(data ?? []));
+        if (!data || data.length < 500) break;
+      }
+      return json({ teachers });
+    }
+
+    if (action === "reset_teacher_password") {
+      if (profile.role !== "admin") return json({ error: "无权重置教师密码" }, 403);
+      const teacherId = String(body.teacher_id ?? "");
+      const password = body.password;
+      if (!teacherId || !validPassword(password)) return json({ error: "请设置有效的新密码" }, 400);
+      const { data: target, error: lookupError } = await admin.from("profiles")
+        .select("id").eq("id", teacherId).eq("role", "teacher").maybeSingle();
+      if (lookupError || !target) return json({ error: "教师账号不存在" }, 404);
+      const { error } = await admin.auth.admin.updateUserById(target.id, { password, email_confirm: true });
+      if (error) return json({ error: "重置密码失败，请稍后重试" }, 400);
+      const { error: flagError } = await admin.from("profiles").update({ must_change_password: false }).eq("id", target.id);
+      if (flagError) return json({ error: "密码已重置，但账号状态更新失败" }, 500);
+      return json({ ok: true });
     }
 
     if (action === "import_students") {

@@ -17,19 +17,17 @@ Deno.serve(withSupabase({ auth: "none" }, async (req: Request, ctx) => {
     const body = await req.json();
     const fullName = String(body.full_name ?? "").trim();
     const employeeNo = String(body.employee_no ?? "").trim();
-    const email = String(body.email ?? "").trim().toLowerCase();
     const password = body.password;
     if (!fullName || fullName.length > 100 || !/^20[0-9]{6}$/.test(employeeNo)
-        || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-        || email.endsWith("@students.scores.invalid")
         || typeof password !== "string" || password.length < 10 || password.length > 128) return failure();
-    const admin = ctx.supabaseAdmin;
-    const { data, error } = await admin.auth.admin.createUser({
+    // Auth needs an internal login identifier, not a real email address.
+    const email = "teacher-" + crypto.randomUUID() + "@teachers.scores.invalid";
+    const { data, error } = await ctx.supabaseAdmin.auth.admin.createUser({
       email, password, email_confirm: true,
       app_metadata: { signup_type: "teacher", full_name: fullName, employee_no: employeeNo },
     });
     if (error || !data.user) return failure();
-    // The database trigger creates the profile in the same transaction as the Auth user.
+    // The trusted database trigger enforces uniqueness and creates the teacher profile.
     return json({ ok: true });
   } catch {
     return failure();

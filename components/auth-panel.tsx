@@ -8,10 +8,9 @@ import { Brand, Icon } from "./ui";
 
 export function AuthPanel({ portal, notify }: { portal: "student" | "teacher"; notify: Notify }) {
   const student = portal === "student";
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<"login" | "register" | "admin">("login");
   const [identity, setIdentity] = useState("");
   const [name, setName] = useState("");
-  const [employeeNo, setEmployeeNo] = useState("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -21,6 +20,7 @@ export function AuthPanel({ portal, notify }: { portal: "student" | "teacher"; n
   function switchMode() {
     notify(null);
     setMode(mode === "login" ? "register" : "login");
+    setIdentity("");
     setPassword("");
     setConfirm("");
   }
@@ -34,23 +34,29 @@ export function AuthPanel({ portal, notify }: { portal: "student" | "teacher"; n
     }
     setBusy(true);
     try {
-      const email = student ? await studentEmail(identity) : identity.trim().toLowerCase();
+      const account = identity.trim();
       if (mode === "register") {
         if (student) {
           await callFunction("student-activate", {
-            student_no: identity.trim().toUpperCase(), full_name: name.trim(), activation_code: code.trim(), password,
+            student_no: account.toUpperCase(), full_name: name.trim(), activation_code: code.trim(), password,
           });
         } else {
-          await callFunction("teacher-register", { full_name: name.trim(), employee_no: employeeNo.trim(), email, password });
+          await callFunction("teacher-register", { full_name: name.trim(), employee_no: account, password });
         }
-        // Registration/activation completed; try signing in immediately.
         setMode("login");
         notify({ kind: "success", text: "账号创建成功。" });
       }
-      const { error } = await getSupabase().auth.signInWithPassword({ email, password });
-      if (error) {
-        const detail = /email not confirmed/i.test(error.message) ? "此账号尚未完成邮箱验证，请检查注册邮件或联系管理员。" : "登录失败，请核对账号和密码。";
-        notify({ kind: "error", text: detail });
+
+      if (!student && mode !== "admin") {
+        const tokens = await callFunction<{ access_token: string; refresh_token: string }>("teacher-login", {
+          employee_no: account, password,
+        });
+        const { error } = await getSupabase().auth.setSession(tokens);
+        if (error) throw error;
+      } else {
+        const email = student ? await studentEmail(account) : account.toLowerCase();
+        const { error } = await getSupabase().auth.signInWithPassword({ email, password });
+        if (error) throw new Error("登录失败，请核对账号和密码。");
       }
     } catch (error) {
       notify({ kind: "error", text: mode === "register" && !student ? "注册未能完成，请核对填写信息或联系管理员。" : messageOf(error) });
@@ -62,17 +68,17 @@ export function AuthPanel({ portal, notify }: { portal: "student" | "teacher"; n
   return <main className={"auth-layout " + (student ? "auth-student" : "auth-teacher")}>
     <section className="auth-banner"><Brand/><div className="auth-banner-main"><span className="hero-icon"><Icon name={student ? "student" : "teacher"} size={46}/></span><h1>{student ? "我的成绩" : "教师工作台"}</h1><div className="auth-chips">{student ? <span><Icon name="book"/>成绩查询</span> : <><span><Icon name="class"/>班级管理</span><span><Icon name="upload"/>成绩导入</span></>}</div></div><Link className="banner-link" href={student ? "/teacher/" : "/student/"}>{student ? "教师 / 管理员入口" : "学生入口"}<Icon name="arrow" size={16}/></Link></section>
     <section className="auth-card">
-      <header className="auth-card-heading"><span className="mobile-portal-icon"><Icon name={student ? "student" : "teacher"} size={24}/></span><h2>{mode === "login" ? (student ? "学生登录" : "教师 / 管理员登录") : student ? "激活学生账号" : "教师注册"}</h2></header>
+      <header className="auth-card-heading"><span className="mobile-portal-icon"><Icon name={student ? "student" : "teacher"} size={24}/></span><h2>{mode === "register" ? (student ? "激活学生账号" : "教师注册") : mode === "admin" ? "管理员登录" : student ? "学生登录" : "教师登录"}</h2></header>
       <form className="form-stack" onSubmit={submit}>
         {mode === "register" && <label>姓名<input autoComplete="name" maxLength={100} required value={name} onChange={e => setName(e.target.value)} placeholder="真实姓名"/></label>}
-        {mode === "register" && !student && <label>工号<input autoComplete="off" inputMode="numeric" required value={employeeNo} onChange={e => setEmployeeNo(e.target.value)} placeholder="请输入工号"/></label>}
-        <label>{student ? "学号" : "邮箱"}<input type={student ? "text" : "email"} autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={student ? 64 : 254} required value={identity} onChange={e => setIdentity(e.target.value)} placeholder={student ? "请输入学号" : "请输入登录邮箱"}/></label>
+        <label>{student ? "学号" : mode === "admin" ? "管理员邮箱" : "工号"}<input type={mode === "admin" ? "email" : "text"} inputMode={!student && mode !== "admin" ? "numeric" : undefined} autoComplete="username" autoCapitalize="none" spellCheck={false} maxLength={mode === "admin" ? 254 : 64} required value={identity} onChange={e => setIdentity(e.target.value)} placeholder={student ? "请输入学号" : mode === "admin" ? "请输入管理员邮箱" : "请输入工号"}/></label>
         {mode === "register" && student && <label>激活码<input autoComplete="off" autoCapitalize="none" spellCheck={false} required value={code} onChange={e => setCode(e.target.value)} placeholder="教师发放的激活码"/></label>}
-        <label>{mode === "login" ? "密码" : "设置密码"}<span className="password-field"><input type={visible ? "text" : "password"} autoComplete={mode === "login" ? "current-password" : "new-password"} minLength={mode === "login" ? undefined : 10} maxLength={128} required value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === "login" ? "请输入密码" : "至少 10 位"}/><button type="button" className="icon-button" aria-label={visible ? "隐藏密码" : "显示密码"} aria-pressed={visible} onClick={() => setVisible(!visible)}><Icon name="eye"/></button></span></label>
+        <label>{mode === "register" ? "设置密码" : "密码"}<span className="password-field"><input type={visible ? "text" : "password"} autoComplete={mode === "register" ? "new-password" : "current-password"} minLength={mode === "register" ? 10 : undefined} maxLength={128} required value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === "register" ? "至少 10 位" : "请输入密码"}/><button type="button" className="icon-button" aria-label={visible ? "隐藏密码" : "显示密码"} aria-pressed={visible} onClick={() => setVisible(!visible)}><Icon name="eye"/></button></span></label>
         {mode === "register" && <label>确认密码<input type="password" autoComplete="new-password" minLength={10} maxLength={128} required value={confirm} onChange={e => setConfirm(e.target.value)} placeholder="再次输入密码"/></label>}
-        <button className="button button-primary button-full" disabled={busy}>{busy ? "处理中…" : mode === "login" ? "登录" : student ? "激活并登录" : "注册并登录"}<Icon name="arrow" size={18}/></button>
+        <button className="button button-primary button-full" disabled={busy}>{busy ? "处理中…" : mode !== "register" ? "登录" : student ? "激活并登录" : "注册并登录"}<Icon name="arrow" size={18}/></button>
       </form>
-      <button className="auth-switch" type="button" onClick={switchMode} disabled={busy}>{mode === "register" ? "返回登录" : student ? "使用激活码开通账号" : "注册教师账号"}</button>
+      <button className="auth-switch" type="button" onClick={switchMode} disabled={busy}>{mode !== "login" ? "返回登录" : student ? "使用激活码开通账号" : "注册教师账号"}</button>
+      {!student && mode === "login" && <button type="button" className="auth-switch" disabled={busy} onClick={() => { setMode("admin"); setIdentity(""); setPassword(""); setConfirm(""); notify(null); }}>管理员登录</button>}
       <div className="auth-links"><Link href="/">首页</Link><Link href={student ? "/teacher/" : "/student/"}>{student ? "教师入口" : "学生入口"}</Link></div>
     </section>
   </main>;
