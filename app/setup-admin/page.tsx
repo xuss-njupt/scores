@@ -1,17 +1,33 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { callFunction } from "@/lib/portal-api";
 
 export default function SetupAdminPage() {
-  const [token, setToken] = useState("");
   const [email, setEmail] = useState("");
   const [fullName, setFullName] = useState("系统管理员");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
+  const [checking, setChecking] = useState(true);
+  const [available, setAvailable] = useState(false);
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+
+  async function checkStatus() {
+    setChecking(true);
+    try {
+      const status = await callFunction<{ available: boolean; registering?: boolean }>("admin-register", { action: "status" });
+      setAvailable(status.available);
+      if (!status.available) setMessage({ ok: false, text: status.registering ? "管理员账号正在创建，请稍后刷新。" : "超级管理员已经注册，请直接登录。" });
+      else setMessage(null);
+    } catch (error) {
+      setAvailable(false);
+      setMessage({ ok: false, text: error instanceof Error ? error.message : "暂时无法读取注册状态。" });
+    } finally { setChecking(false); }
+  }
+
+  useEffect(() => { void checkStatus(); }, []);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -26,9 +42,9 @@ export default function SetupAdminPage() {
     }
     setBusy(true);
     try {
-      await callFunction("bootstrap-admin", { bootstrap_token: token.trim(), email: email.trim(), full_name: fullName.trim(), password });
-      setMessage({ ok: true, text: "超级管理员已创建。请前往登录页，使用刚才设置的邮箱和密码登录。此初始化令牌已经失效。" });
-      setToken("");
+      await callFunction("admin-register", { action: "register", email: email.trim(), full_name: fullName.trim(), password });
+      setMessage({ ok: true, text: "超级管理员创建成功！现在可以使用邮箱和密码登录。" });
+      setAvailable(false);
       setPassword("");
       setConfirm("");
     } catch (error) {
@@ -43,15 +59,12 @@ export default function SetupAdminPage() {
       <div className="setup-card">
         <div className="brand">
           <div className="brand-mark">分</div>
-          <div><strong>校园成绩平台</strong><span>ONE-TIME ADMIN SETUP</span></div>
+          <div><strong>校园成绩平台</strong><span>FIRST ADMIN REGISTRATION</span></div>
         </div>
-        <div className="eyebrow setup-eyebrow">FIRST-TIME CONFIGURATION</div>
+        <div className="eyebrow setup-eyebrow">ONE ADMINISTRATOR ACCOUNT</div>
         <h1>创建超级管理员</h1>
-        <p className="setup-intro">此页面仅用于首次初始化。创建成功后，一次性令牌立即失效，</p>
-        <form className="form-stack" onSubmit={submit}>
-          <label>一次性初始化令牌
-            <input type="password" value={token} onChange={(e) => setToken(e.target.value)} required autoComplete="off" placeholder="粘贴一次性初始化令牌" />
-          </label>
+        <p className="setup-intro">系统仅允许注册一个超级管理员。注册成功后，此入口自动关闭。</p>
+        {checking ? <div className="notice info" role="status">正在检查管理员注册状态…</div> : available ? <form className="form-stack" onSubmit={submit}>
           <label>管理员姓名
             <input value={fullName} onChange={(e) => setFullName(e.target.value)} required maxLength={100} />
           </label>
@@ -65,10 +78,10 @@ export default function SetupAdminPage() {
             <input type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required minLength={12} autoComplete="new-password" placeholder="再次输入密码" />
           </label>
           {message && <div className={message.ok ? "notice success" : "notice error"} role="status">{message.text}</div>}
-          <button className="button button-primary button-full" disabled={busy}>{busy ? "正在安全初始化…" : "创建超级管理员"}</button>
-        </form>
-        <p className="setup-warning">请勿将初始化令牌分享给他人。该页面不开放普通用户注册，也不能重复创建管理员。</p>
-        <Link href="/teacher/" className="setup-back">返回登录页</Link>
+          <button className="button button-primary button-full" disabled={busy}>{busy ? "正在创建…" : "注册超级管理员"}</button>
+        </form> : <div className="form-stack">{message && <div className={message.ok ? "notice success" : "notice error"} role="status">{message.text}</div>}<button type="button" className="button button-light button-full" onClick={() => void checkStatus()}>重新检查</button></div>}
+        <p className="setup-warning">超级管理员账号只能创建一次。创建成功后，其他人不能再通过此页面注册。</p>
+        <Link href="/teacher/" className="setup-back">前往登录页面</Link>
       </div>
     </main>
   );
