@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.teacher-register]
 verify_jwt = false
+
+[functions.teacher-login]
+verify_jwt = false
