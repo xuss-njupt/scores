@@ -3,7 +3,7 @@
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { getSupabase } from "@/lib/supabase";
-import { callFunction, messageOf, studentEmail, type Notify } from "@/lib/portal-api";
+import { adminAction, callFunction, messageOf, studentEmail, type Notify } from "@/lib/portal-api";
 import { teacherEmail } from "@/lib/teacher-auth";
 import { Brand, Icon } from "./ui";
 
