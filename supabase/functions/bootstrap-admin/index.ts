@@ -8,7 +8,6 @@ const corsHeaders = {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { ...corsHeaders, "Content-Type": "application/json" },
 });
-const BOOTSTRAP_TOKEN_SHA256 = "bbb290d8ca5832858312bf9740bc8ed6dceb91c8225c01ea35d339c4c4ee1678";
 
 async function sha256(input: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
@@ -31,8 +30,19 @@ Deno.serve(withSupabase({ auth: "none" }, async (req: Request, ctx) => {
     const email = String(body.email ?? "").trim().toLowerCase();
     const fullName = String(body.full_name ?? "").trim();
     const password = body.password;
-    if (!suppliedToken || (await sha256(suppliedToken)) !== BOOTSTRAP_TOKEN_SHA256) {
+    if (!/^[0-9a-f]{64}$/i.test(suppliedToken)) {
       return json({ error: "一次性初始化令牌无效" }, 403);
+    }
+    const suppliedHash = await sha256(suppliedToken);
+    const { data: tokenState, error: tokenStateError } = await admin
+      .from("admin_bootstrap_state")
+      .select("bootstrap_token_hash, claimed_at, admin_id")
+      .eq("singleton", true)
+      .maybeSingle();
+    if (tokenStateError) return json({ error: "初始化服务暂时不可用" }, 500);
+    if (!tokenState || tokenState.admin_id || tokenState.claimed_at ||
+        !tokenState.bootstrap_token_hash || suppliedHash !== tokenState.bootstrap_token_hash) {
+      return json({ error: "一次性初始化令牌无效或已经使用" }, 403);
     }
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !fullName || fullName.length > 100 || !validPassword(password)) {
       return json({ error: "请填写有效邮箱、管理员姓名和至少12位密码" }, 400);
@@ -44,6 +54,8 @@ Deno.serve(withSupabase({ auth: "none" }, async (req: Request, ctx) => {
       .update({ claimed_at: reservationTime })
       .eq("singleton", true)
       .is("claimed_at", null)
+      .is("admin_id", null)
+      .eq("bootstrap_token_hash", suppliedHash)
       .select("singleton")
       .maybeSingle();
     if (reserveError) return json({ error: reserveError.message }, 500);
@@ -62,7 +74,7 @@ Deno.serve(withSupabase({ auth: "none" }, async (req: Request, ctx) => {
     if (profileError) throw new Error(profileError.message);
 
     const { error: finishError } = await admin.from("admin_bootstrap_state")
-      .update({ admin_id: createdUserId })
+      .update({ admin_id: createdUserId, bootstrap_token_hash: null })
       .eq("singleton", true).eq("claimed_at", reservationTime);
     if (finishError) throw new Error(finishError.message);
 
