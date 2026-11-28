@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import type { Profile } from "@/lib/types";
 import { getSupabase } from "@/lib/supabase";
 import { messageOf, type Notice } from "@/lib/portal-api";
 import { AuthPanel, PasswordPanel } from "./auth-panel";
 import { Brand, Empty, Icon, Loading, NoticeBar } from "./ui";
-import { StudentPortal } from "./student-portal";
-import { TeacherWorkspace } from "./teacher-workspace";
-import { AdminWorkspace } from "./admin-workspace";
+const StudentPortal = dynamic(() => import("./student-portal").then(m => m.StudentPortal), { loading: () => <Loading/> });
+const TeacherWorkspace = dynamic(() => import("./teacher-workspace").then(m => m.TeacherWorkspace), { loading: () => <Loading/> });
+const AdminWorkspace = dynamic(() => import("./admin-workspace").then(m => m.AdminWorkspace), { loading: () => <Loading/> });
 
 export default function PortalShell({ portal }: { portal: "student" | "teacher" }) {
   const [userId, setUserId] = useState<string | null>(null);
