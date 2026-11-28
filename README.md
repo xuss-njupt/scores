@@ -1,141 +1,52 @@
 # 校园成绩查询平台
 
-面向学校教师与学生的成绩管理网站。**只使用 GitHub 和 Supabase**：GitHub Pages 托管静态前端，GitHub Actions 自动构建发布，Supabase 提供认证、数据库、行级权限和 Edge Functions。不依赖 Vercel、Netlify 或其他网站托管平台。
+使用 GitHub Pages + Supabase，不需要其他托管平台。
 
-## 功能
+## 网站入口
 
-- **超级管理员**：创建教师账号、查看教师列表。
-- **教师**：创建和管理自己的班级；通过 Excel 批量导入学生；导入多列成绩；发布/撤回成绩；重置已激活学生的密码。
-- **学生**：使用学号和密码登录；首次使用凭教师发放的一次性激活码设置密码；只查看本人已发布成绩。
-- **数据隔离**：数据库启用 RLS；教师只能管理自己的班级；学生只能读取本人已发布成绩；成绩导入后默认不发布。
-- **部署**：推送到 GitHub main 分支后，自动构建并发布到 GitHub Pages。
+- 首页：https://xuss-njupt.github.io/scores/
+- 学生查询（手机优先）：https://xuss-njupt.github.io/scores/student/
+- 教师 / 管理员：https://xuss-njupt.github.io/scores/teacher/
+- 首次管理员初始化：https://xuss-njupt.github.io/scores/setup-admin/
 
-## 技术栈
+## 使用方式
 
-- Next.js 16.4.6 / React 19.3.1 / TypeScript
-- GitHub Actions / GitHub Pages
-- Supabase Auth / PostgreSQL / Row Level Security / Edge Functions
-- read-excel-file 9.3.20（浏览器端读取 .xlsx）
+学生使用学号与密码登录，教师导入的密码可直接使用。若未设置初始密码，凭教师发放的激活码设置个人密码。学生只查看本人已发布的成绩，可筛选班级和搜索考试。
 
-## 正式网站地址
+教师可自助注册，使用邮箱与密码登录。教师工作台包含班级列表、学生名单和成绩管理；可查看分数、导入、核对、发布或撤回。管理员仍可创建教师账号。
 
-https://xuss-njupt.github.io/scores/
+### Excel
 
-管理员首次初始化页面：
+学生名单表头：学号、姓名、密码（选填）。成绩表：学号、姓名、其余列名为成绩项目。请使用 .xlsx 格式，建议学号列设为文本，避免前导零丢失。教师端提供可另存为 .xlsx 的 CSV 示例。
 
-https://xuss-njupt.github.io/scores/setup-admin/
+名单导入先检查格式、重复学号及密码长度，再分批处理 Auth 用户创建与名单关联；导入结束会显示成功数、需核对的记录和可导出的激活码。已有学生账号不被重复导入覆盖密码。无密码账号的激活码 7 天有效。名单涉及外部 Auth 操作，可能部分成功；可按报告重试失败行。
 
-## 本地运行
+成绩导入按本班学号和姓名核对，拒绝重复、非法分数和不匹配的数据。整个导入在单一数据库事务内完成。新建及重新导入的项目均转为待发布，空白单元格不覆盖原有成绩。请核对成绩后再发布。
 
-要求 Node.js 20.9 或更高版本。
+## 代码结构
 
-```bash
-git clone https://github.com/xuss-njupt/scores.git
-cd scores
-cp .env.example .env.local
+- `app/`：独立学生、教师、首页和管理员初始化路由
+- `components/`：认证、角色页面、教师班级与成绩工作区、通用 UI
+- `lib/`：Supabase 客户端、API 错误处理、分页、Excel 读取及数据校验
+- `tests/`：导入规则的自动化测试
+- `supabase/migrations/`：数据库结构、权限、完整性与成绩导入事务
+- `supabase/functions/`：教师注册、管理操作、学生激活、管理员初始化
+
+## 本地开发
+
+Node.js 22，复制 .env.example 为 .env.local，填写 Supabase 项目 URL 与 Publishable Key。
+
+```sh
 npm ci
+npm test
+npm run typecheck
 npm run dev
 ```
 
-本地开发时在 `.env.local` 中填写 Supabase URL 和 Publishable Key：
+CI 自动执行测试、依赖审计、类型检查和静态构建。main 分支由 GitHub Actions 发布至 GitHub Pages。Supabase 数据库迁移及 Edge Functions 必须独立同步部署；不能仅靠前端构建更新后端。
 
-```env
-NEXT_PUBLIC_SUPABASE_URL=https://hwxsuieolykxfgjxitra.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=你的Supabase_Publishable_Key
-```
+## 数据边界
 
-浏览器端只使用 Publishable Key。**不要将 Supabase Secret Key、service_role key、数据库密码或 Supabase Access Token 写入前端变量或提交到 GitHub。**
+业务表通过 RLS 限定班级及个人访问范围；成绩必须对应同班学生。教师自助注册由服务端创建认证账号；不要求新注册者进行邮件验证。教师身份真实性仍依赖学校的工号管理方式。学生重置密码后可直接使用。管理员初始化使用一次性令牌。
 
-## Supabase 项目
-
-- Project ref：`hwxsuieolykxfgjxitra`
-- API URL：`https://hwxsuieolykxfgjxitra.supabase.co`
-
-生产数据库已经部署以下表并启用 RLS：
-
-- `profiles`
-- `classes`
-- `students`
-- `assessments`
-- `scores`
-- `student_invites`
-- `admin_bootstrap_state`
-
-数据库迁移保存在 `supabase/migrations/`。三个 Edge Functions 已部署并启用：
-
-- `scores-admin`：管理员和教师的受权管理操作。
-- `student-activate`：学生一次性激活。
-- `bootstrap-admin`：一次性创建第一个超级管理员。
-
-Edge Functions 在 Supabase 服务端运行，服务端密钥不会发送到浏览器。不要把 Secret Key 放进 GitHub Actions 的前端构建变量。
-
-## GitHub Pages 自动部署
-
-仓库已经配置：
-
-- `next.config.ts`：Next.js 静态导出（`output: "export"`）、GitHub Pages 项目路径 `/scores` 和尾部斜杠路由。
-- `.github/workflows/ci.yml`：依赖安全审计、TypeScript 检查和静态构建。
-- `.github/workflows/deploy-pages.yml`：构建 `out/` 并通过 GitHub Pages 官方 Actions 发布。
-- `public/.nojekyll`：确保 Next.js 的 `_next` 静态资源目录正常发布。
-
-### 首次启用 Pages（只需一次）
-
-1. 打开仓库 Settings → Pages。
-2. 在 Build and deployment 的 Source 中选择 **GitHub Actions**。
-3. 保存。
-
-此后每次向 `main` 推送代码，`Deploy GitHub Pages` 工作流都会自动构建和发布。也可以在仓库 Actions 页面手动运行该工作流。
-
-### 发布检查
-
-部署成功后打开 https://xuss-njupt.github.io/scores/，确认页面、CSS 和 JavaScript 资源均正常加载。再检查：
-
-- 管理员、教师和学生密码登录与退出。
-- 学生首次激活、教师重置密码后的强制改密。
-- 管理员创建教师。
-- 教师创建班级、导入学生名单、生成激活码。
-- 教师导入成绩、检查未发布状态、发布和撤回成绩。
-- 学生只能看到本人已发布的成绩。
-
-如果 GitHub Pages 还未启用，或仓库 Actions 没有 Pages 发布权限，首次工作流可能提示配置问题；按上面的 Settings → Pages 设置一次即可。
-
-## 创建第一个超级管理员
-
-打开正式网站的 `/setup-admin/` 页面，输入项目的一次性初始化令牌、管理员姓名、邮箱和至少12位密码。Edge Function 会在 Supabase Auth 创建首个管理员，并在 `profiles` 中赋予 admin 角色。初始化成功后令牌立即失效，不能再次使用。
-
-系统不开放公开注册。教师账号由超级管理员创建；学生账号由教师导入名单并通过初始密码或一次性激活码开通。不要给普通教师或学生分配 admin 角色。
-
-## Excel 格式
-
-### 学生名单
-
-第一行是表头，至少包含学号和姓名；密码列可选。
-
-| 学号 | 姓名 | 密码（可选） |
-|---|---|---|
-| 20260001 | 张三 | InitPass2026 |
-| 20260002 | 李四 | |
-
-- 密码列有值：初始密码至少10位，直接创建账号，首次登录必须改密。
-- 密码列缺失或为空：系统生成一次性激活码，有效期7天，只显示一次。教师需通过安全渠道发给对应学生。
-- 已激活学生再次导入名单不会覆盖其密码。
-
-### 成绩表
-
-第一行至少包含学号和姓名，其余列名作为成绩项目名称：
-
-| 学号 | 姓名 | 课堂测试 | 阶段考试 | 期中考试 |
-|---|---|---:|---:|---:|
-| 20260001 | 张三 | 88 | 91 | 86 |
-| 20260002 | 李四 | 92 | 84 | 90 |
-
-导入时按学号匹配本班学生，空白成绩跳过。每个成绩列创建一条考试记录，默认未发布；教师检查后再逐项发布。当前支持 `.xlsx`；旧版 `.xls` 请先另存为 `.xlsx`。学号建议设置为文本格式以保留前导零。
-
-## 安全说明
-
-- 学生登录账号由学号的 SHA-256 摘要生成内部邮箱标识，学生仍只需输入学号和密码。
-- 角色由受保护的 profiles 数据管理，普通用户不能自行提升角色。
-- 学生只能读取本人已发布成绩；教师只能管理自己班级。
-- 学生密码重置后，在完成强制改密前，RLS 会阻断其读取班级、考试和成绩数据。
-- 所有公开业务表启用 RLS。不要将学生名单或成绩文件放入公开 Storage Bucket。
-- GitHub Pages 的前端是公开静态文件；Supabase Publishable Key 本来就是公开客户端密钥。安全边界必须由 Supabase Auth、Edge Functions 和 RLS 提供，绝不能依赖隐藏前端代码或保密 Publishable Key。
+浏览器只使用 Publishable Key；禁止把服务端密钥、数据库密码或访问令牌提交到仓库。真实名单、成绩和激活码不可提交到公开仓库。管理员应妥善保管初始化令牌。

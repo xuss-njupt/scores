@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import Link from "next/link";
-import { getSupabase } from "@/lib/supabase";
+import { callFunction } from "@/lib/portal-api";
 
 export default function SetupAdminPage() {
   const [token, setToken] = useState("");
@@ -26,11 +26,7 @@ export default function SetupAdminPage() {
     }
     setBusy(true);
     try {
-      const { data, error } = await getSupabase().functions.invoke("bootstrap-admin", {
-        body: { bootstrap_token: token.trim(), email: email.trim(), full_name: fullName.trim(), password },
-      });
-      if (error) throw new Error(data?.error || error.message);
-      if (data?.error) throw new Error(String(data.error));
+      await callFunction("bootstrap-admin", { bootstrap_token: token.trim(), email: email.trim(), full_name: fullName.trim(), password });
       setMessage({ ok: true, text: "超级管理员已创建。请前往登录页，使用刚才设置的邮箱和密码登录。此初始化令牌已经失效。" });
       setToken("");
       setPassword("");
@@ -51,10 +47,10 @@ export default function SetupAdminPage() {
         </div>
         <div className="eyebrow setup-eyebrow">FIRST-TIME CONFIGURATION</div>
         <h1>创建超级管理员</h1>
-        <p className="setup-intro">此页面仅用于首次初始化。创建成功后，一次性令牌立即失效，后续教师账号由超级管理员在网站后台创建。</p>
+        <p className="setup-intro">此页面仅用于首次初始化。创建成功后，一次性令牌立即失效，</p>
         <form className="form-stack" onSubmit={submit}>
           <label>一次性初始化令牌
-            <input value={token} onChange={(e) => setToken(e.target.value)} required autoComplete="off" placeholder="粘贴一次性初始化令牌" />
+            <input type="password" value={token} onChange={(e) => setToken(e.target.value)} required autoComplete="off" placeholder="粘贴一次性初始化令牌" />
           </label>
           <label>管理员姓名
             <input value={fullName} onChange={(e) => setFullName(e.target.value)} required maxLength={100} />
@@ -72,7 +68,7 @@ export default function SetupAdminPage() {
           <button className="button button-primary button-full" disabled={busy}>{busy ? "正在安全初始化…" : "创建超级管理员"}</button>
         </form>
         <p className="setup-warning">请勿将初始化令牌分享给他人。该页面不开放普通用户注册，也不能重复创建管理员。</p>
-        <Link href="/" className="setup-back">返回登录页</Link>
+        <Link href="/teacher/" className="setup-back">返回登录页</Link>
       </div>
     </main>
   );
