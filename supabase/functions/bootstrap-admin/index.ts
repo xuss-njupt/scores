@@ -8,7 +8,7 @@ const corsHeaders = {
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status, headers: { ...corsHeaders, "Content-Type": "application/json" },
 });
-const BOOTSTRAP_TOKEN_SHA256 = "2578d1b6b468e6e28832cd7f8364e4d10166f8d9da657c52d316e56cb42a7313";
+const BOOTSTRAP_TOKEN_SHA256 = "bbb290d8ca5832858312bf9740bc8ed6dceb91c8225c01ea35d339c4c4ee1678";
 
 async function sha256(input: string) {
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
