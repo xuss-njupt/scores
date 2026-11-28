@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
-  status, headers: { ...corsHeaders, "Content-Type": "application/json" },
+  status, headers: { ...corsHeaders, "Content-Type": "application/json", "Cache-Control": "no-store" },
 });
 function randomCode(bytes = 18) {
   const data = crypto.getRandomValues(new Uint8Array(bytes));
@@ -42,7 +42,7 @@ Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
       const email = String(body.email ?? "").trim().toLowerCase();
       const fullName = String(body.full_name ?? "").trim();
       const password = body.password;
-      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !fullName || !validPassword(password)) {
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !fullName || fullName.length > 100 || email.endsWith("@students.scores.invalid") || !validPassword(password)) {
         return json({ error: "请提供有效邮箱、教师姓名和至少10位初始密码" }, 400);
       }
       const { data: created, error: createError } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
@@ -72,73 +72,117 @@ Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
       if (!classId || !Array.isArray(rows) || rows.length < 1 || rows.length > 500) {
         return json({ error: "班级或学生数据格式不正确（单次最多500人）" }, 400);
       }
-      const { data: classroom } = await admin.from("classes").select("id, teacher_id").eq("id", classId).single();
-      if (!classroom) return json({ error: "班级不存在" }, 404);
+      const { data: classroom, error: classroomError } = await admin.from("classes").select("id, teacher_id").eq("id", classId).single();
+      if (classroomError || !classroom) return json({ error: "班级不存在" }, 404);
       if (profile.role !== "admin" && classroom.teacher_id !== user.id) return json({ error: "不能管理其他教师的班级" }, 403);
 
+      const normalized = rows.map((row) => {
+        const rawPassword = typeof row?.initial_password === "string" ? row.initial_password : String(row?.initial_password ?? "");
+        return { studentNo: String(row?.student_no ?? "").trim().toUpperCase(),
+          fullName: String(row?.full_name ?? "").trim(),
+          initialPassword: rawPassword.trim() ? rawPassword : "" };
+      });
+      const ids = new Set<string>();
+      for (const row of normalized) {
+        if (!row.studentNo || !row.fullName || row.studentNo.length > 64 || row.fullName.length > 100 || ids.has(row.studentNo)) {
+          return json({ error: "名单存在空白、超长字段或重复学号" }, 400);
+        }
+        ids.add(row.studentNo);
+      }
+
+      // Validate every row before creating accounts; retain a per-row report for external Auth failures.
       const activation: Array<{ student_no: string; full_name: string; activation_code: string; expires_at: string }> = [];
+      const failed: Array<{ student_no: string; error: string }> = [];
+      const prepared: Array<{ studentNo: string; fullName: string; initialPassword: string; profileId: string | null }> = [];
+      const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+      for (const row of normalized) {
+        const { studentNo, fullName, initialPassword } = row;
+        const { data: existing, error: lookupError } = await admin.from("profiles")
+          .select("id,role,full_name").eq("student_no",studentNo).maybeSingle();
+        if (lookupError) return json({ error: "无法核对学生账号，请重试" }, 500);
+        const { data: enrollments, error: enrollmentError } = await admin.from("students")
+          .select("full_name").eq("student_no",studentNo);
+        if (enrollmentError) return json({ error: "无法核对学生名单，请重试" }, 500);
+        if ((existing && (existing.role !== "student" || !sameName(existing.full_name,fullName))) ||
+            (enrollments ?? []).some((entry) => !sameName(entry.full_name,fullName))) {
+          failed.push({ student_no: studentNo, error: "学号与已有姓名不一致，请核对" });
+          continue;
+        }
+        if (!existing && initialPassword && !validPassword(initialPassword)) {
+          failed.push({ student_no: studentNo, error: "初始密码需要10至128位" });
+          continue;
+        }
+        prepared.push({ ...row, profileId: existing?.id ?? null });
+      }
+
+      let imported = 0;
       let passwordAccounts = 0;
-      for (const row of rows) {
-        const studentNo = String(row.student_no ?? "").trim().toUpperCase();
-        const fullName = String(row.full_name ?? "").trim();
-        const initialPassword = String(row.initial_password ?? "").trim();
-        if (!studentNo || !fullName || studentNo.length > 64 || fullName.length > 100) {
-          return json({ error: "学生学号或姓名为空，或长度超限" }, 400);
-        }
-        const { data: existingProfile, error: existingError } = await admin.from("profiles")
-          .select("id, role").eq("student_no", studentNo).maybeSingle();
-        if (existingError) return json({ error: existingError.message }, 400);
-        if (existingProfile && existingProfile.role !== "student") return json({ error: "学号 " + studentNo + " 已被非学生账号使用" }, 409);
-        if (!existingProfile && initialPassword && !validPassword(initialPassword)) {
-          return json({ error: "学号 " + studentNo + " 的初始密码至少10位，最多128位" }, 400);
-        }
-
-        const { error: upsertError } = await admin.from("students").upsert({
-          class_id: classId, student_no: studentNo, full_name: fullName, profile_id: existingProfile?.id ?? null,
-        }, { onConflict: "class_id,student_no" });
-        if (upsertError) return json({ error: "导入 " + studentNo + " 失败：" + upsertError.message }, 400);
-
-        if (!existingProfile && initialPassword) {
-          const { error: removeInviteError } = await admin.from("student_invites")
-            .delete().eq("student_no", studentNo).is("consumed_at", null);
-          if (removeInviteError) return json({ error: removeInviteError.message }, 400);
-          const email = await studentEmail(studentNo);
-          const { data: created, error: createError } = await admin.auth.admin.createUser({
-            email, password: initialPassword, email_confirm: true,
-          });
-          if (createError || !created.user) return json({ error: "为 " + studentNo + " 创建账号失败：" + (createError?.message ?? "未知错误") }, 400);
-          const { error: profileInsertError } = await admin.from("profiles").insert({
-            id: created.user.id, role: "student", full_name: fullName,
-            student_no: studentNo, must_change_password: false,
-          });
-          if (profileInsertError) {
-            await admin.auth.admin.deleteUser(created.user.id);
-            return json({ error: "保存 " + studentNo + " 的账号资料失败：" + profileInsertError.message }, 400);
+      for (const row of prepared) {
+        const { studentNo, fullName, initialPassword } = row;
+        let profileId = row.profileId;
+        try {
+          // Recheck before creation because another class may have just activated this account.
+          if (!profileId) {
+            const { data: current, error: lookupError } = await admin.from("profiles")
+              .select("id,role,full_name").eq("student_no",studentNo).maybeSingle();
+            if (lookupError) throw new Error("无法核对学生账号");
+            if (current) {
+              if (current.role !== "student" || !sameName(current.full_name,fullName)) throw new Error("学号与已有姓名不一致");
+              profileId = current.id;
+            }
           }
-          const { error: enrollmentError } = await admin.from("students").update({ profile_id: created.user.id })
-            .eq("class_id", classId).eq("student_no", studentNo);
-          if (enrollmentError) {
-            await admin.from("profiles").delete().eq("id", created.user.id);
-            await admin.auth.admin.deleteUser(created.user.id);
-            return json({ error: "关联 " + studentNo + " 的班级记录失败：" + enrollmentError.message }, 400);
+          let newAccount = false;
+          if (!profileId && initialPassword) {
+            const email = await studentEmail(studentNo);
+            const { data: created, error: createError } = await admin.auth.admin.createUser({
+              email, password: initialPassword, email_confirm: true,
+            });
+            if (createError || !created.user) throw new Error("账号创建失败，请检查密码或稍后重试");
+            const { error: profileError } = await admin.from("profiles").insert({
+              id: created.user.id, role: "student", full_name: fullName, student_no: studentNo, must_change_password: false,
+            });
+            if (profileError) {
+              await admin.auth.admin.deleteUser(created.user.id);
+              throw new Error("学生账号资料创建失败");
+            }
+            profileId = created.user.id;
+            newAccount = true;
           }
-          passwordAccounts += 1;
-        } else if (!existingProfile) {
-          const activationCode = randomCode();
-          const codeHash = await sha256(activationCode);
-          const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-          const { error: removeError } = await admin.from("student_invites")
-            .delete().eq("class_id", classId).eq("student_no", studentNo).is("consumed_at", null);
-          if (removeError) return json({ error: removeError.message }, 400);
-          const { error: inviteError } = await admin.from("student_invites").insert({
-            student_no: studentNo, full_name: fullName, class_id: classId,
-            code_hash: codeHash, expires_at: expiresAt, created_by: user.id,
-          });
-          if (inviteError) return json({ error: "为 " + studentNo + " 生成激活码失败：" + inviteError.message }, 400);
-          activation.push({ student_no: studentNo, full_name: fullName, activation_code: activationCode, expires_at: expiresAt });
+          const { error: upsertError } = await admin.from("students").upsert({
+            class_id: classId, student_no: studentNo, full_name: fullName, profile_id: profileId,
+          }, { onConflict: "class_id,student_no" });
+          if (upsertError) throw new Error("班级名单保存失败，可重新导入此行");
+
+          if (profileId) {
+            // Link any previously imported, matching enrollment in another class.
+            const { error: linkError } = await admin.from("students").update({ profile_id: profileId })
+              .eq("student_no",studentNo).eq("full_name",fullName).is("profile_id",null);
+            if (linkError) throw new Error("关联学生的其他班级记录失败，可重新导入");
+            const { error: consumeError } = await admin.from("student_invites")
+              .update({ consumed_at: new Date().toISOString() }).eq("student_no",studentNo).is("consumed_at",null);
+            if (consumeError) throw new Error("账号已建立，但旧激活码清理失败，可重新导入");
+            if (newAccount) passwordAccounts += 1;
+          } else {
+            const activationCode = randomCode();
+            const codeHash = await sha256(activationCode);
+            const expiresAt = new Date(Date.now()+7*24*60*60*1000).toISOString();
+            const { data: invite, error: inviteError } = await admin.from("student_invites").insert({
+              student_no: studentNo, full_name: fullName, class_id: classId,
+              code_hash: codeHash, expires_at: expiresAt, created_by: user.id,
+            }).select("id").single();
+            if (inviteError || !invite) throw new Error("生成激活码失败，可重新导入此行");
+            // Issue the new code before invalidating the old one.
+            const { error: removeError } = await admin.from("student_invites").delete()
+              .eq("class_id",classId).eq("student_no",studentNo).is("consumed_at",null).neq("id",invite.id);
+            activation.push({ student_no: studentNo, full_name: fullName, activation_code: activationCode, expires_at: expiresAt });
+            if (removeError) throw new Error("新激活码已生成，但旧激活码未能清理");
+          }
+          imported += 1;
+        } catch (error) {
+          failed.push({ student_no: studentNo, error: error instanceof Error ? error.message : "导入失败" });
         }
       }
-      return json({ ok: true, imported: rows.length, password_accounts: passwordAccounts, activation });
+      return json({ ok: true, imported, password_accounts: passwordAccounts, activation, failed });
     }
 
     if (action === "reset_student_password") {
@@ -171,7 +215,8 @@ Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
     if (action === "publish_assessment") {
       if (!["admin", "teacher"].includes(profile.role)) return json({ error: "无权发布成绩" }, 403);
       const assessmentId = String(body.assessment_id ?? "");
-      const publish = Boolean(body.is_published);
+      if (typeof body.is_published !== "boolean") return json({ error: "发布状态无效" }, 400);
+      const publish = body.is_published;
       const { data: assessment } = await admin.from("assessments").select("id, class_id").eq("id", assessmentId).single();
       if (!assessment) return json({ error: "考试记录不存在" }, 404);
       const { data: classroom } = await admin.from("classes").select("teacher_id").eq("id", assessment.class_id).single();
@@ -182,6 +227,6 @@ Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
     }
     return json({ error: "未知操作" }, 400);
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : "服务器内部错误" }, 401);
+    return json({ error: error instanceof Error ? error.message : "服务器内部错误" }, 500);
   }
 }));
