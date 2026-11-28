@@ -8,7 +8,7 @@ const headers = {
   "Cache-Control": "no-store",
 };
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers });
-const failure = () => json({ error: "注册未能完成，请核对填写信息或联系管理员。" }, 400);
+const failure = (status = 400) => json({ error: "注册未能完成，请核对工号是否已注册及密码是否符合要求。" }, status);
 
 Deno.serve(withSupabase({ auth: "none" }, async (req: Request, ctx) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers });
@@ -20,16 +20,46 @@ Deno.serve(withSupabase({ auth: "none" }, async (req: Request, ctx) => {
     const password = body.password;
     if (!fullName || fullName.length > 100 || !/^20[0-9]{6}$/.test(employeeNo)
         || typeof password !== "string" || password.length < 10 || password.length > 128) return failure();
-    // Auth needs an internal login identifier, not a real email address.
-    const email = "teacher-" + crypto.randomUUID() + "@teachers.scores.invalid";
-    const { data, error } = await ctx.supabaseAdmin.auth.admin.createUser({
+
+    const admin = ctx.supabaseAdmin;
+    const { data: existing, error: lookupError } = await admin.from("profiles")
+      .select("id").eq("employee_no", employeeNo).maybeSingle();
+    if (lookupError) return failure(503);
+    if (existing) return failure(409);
+
+    // Supabase Auth still uses an internal email identifier; users only enter their employee number.
+    const email = "teacher-" + employeeNo + "@teachers.scores.invalid";
+    const { data: created, error: createError } = await admin.auth.admin.createUser({
       email, password, email_confirm: true,
       app_metadata: { signup_type: "teacher", full_name: fullName, employee_no: employeeNo },
     });
-    if (error || !data.user) return failure();
-    // The trusted database trigger enforces uniqueness and creates the teacher profile.
+    if (createError || !created.user) return failure(409);
+
+    // Do not rely on an auth.users trigger: GoTrue may update app_metadata after INSERT.
+    const { data: profile, error: profileLookupError } = await admin.from("profiles")
+      .select("id,role,employee_no").eq("id", created.user.id).maybeSingle();
+    if (profileLookupError) {
+      await admin.auth.admin.deleteUser(created.user.id);
+      return failure(503);
+    }
+    if (profile) {
+      if (profile.role !== "teacher" || profile.employee_no !== employeeNo) {
+        await admin.auth.admin.deleteUser(created.user.id);
+        return failure(409);
+      }
+    } else {
+      const { error: insertError } = await admin.from("profiles").insert({
+        id: created.user.id, role: "teacher", full_name: fullName,
+        employee_no: employeeNo, must_change_password: false,
+      });
+      if (insertError) {
+        await admin.auth.admin.deleteUser(created.user.id);
+        return failure(409);
+      }
+    }
     return json({ ok: true });
-  } catch {
-    return failure();
+  } catch (error) {
+    console.error("teacher-register failed", error);
+    return failure(500);
   }
 }));

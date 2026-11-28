@@ -3,7 +3,8 @@
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { getSupabase } from "@/lib/supabase";
-import { adminAction, callFunction, messageOf, studentEmail, type Notify } from "@/lib/portal-api";
+import { callFunction, messageOf, studentEmail, type Notify } from "@/lib/portal-api";
+import { teacherEmail } from "@/lib/teacher-auth";
 import { Brand, Icon } from "./ui";
 
 export function AuthPanel({ portal, notify }: { portal: "student" | "teacher"; notify: Notify }) {
@@ -47,17 +48,13 @@ export function AuthPanel({ portal, notify }: { portal: "student" | "teacher"; n
         notify({ kind: "success", text: "账号创建成功。" });
       }
 
-      if (!student && mode !== "admin") {
-        const tokens = await callFunction<{ access_token: string; refresh_token: string }>("teacher-login", {
-          employee_no: account, password,
-        });
-        const { error } = await getSupabase().auth.setSession(tokens);
-        if (error) throw error;
-      } else {
-        const email = student ? await studentEmail(account) : account.toLowerCase();
-        const { error } = await getSupabase().auth.signInWithPassword({ email, password });
-        if (error) throw new Error("登录失败，请核对账号和密码。");
-      }
+      const email = student
+        ? await studentEmail(account)
+        : mode === "admin"
+          ? account.toLowerCase()
+          : teacherEmail(account);
+      const { error } = await getSupabase().auth.signInWithPassword({ email, password });
+      if (error) throw new Error("登录失败，请核对账号和密码。");
     } catch (error) {
       notify({ kind: "error", text: mode === "register" && !student ? "注册未能完成，请核对填写信息或联系管理员。" : messageOf(error) });
     } finally {
