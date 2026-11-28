@@ -45,13 +45,38 @@ Deno.serve(withSupabase({ auth: "user" }, async (req: Request, ctx) => {
       if (!/^20[0-9]{6}$/.test(employeeNo) || !fullName || fullName.length > 100 || !validPassword(password)) {
         return json({ error: "请核对工号、教师姓名和初始密码" }, 400);
       }
-      const email = "teacher-" + crypto.randomUUID() + "@teachers.scores.invalid";
-      const { data, error } = await admin.auth.admin.createUser({
+      const { data: existing, error: lookupError } = await admin.from("profiles")
+        .select("id").eq("employee_no", employeeNo).maybeSingle();
+      if (lookupError) return json({ error: "暂时无法检查工号，请稍后重试" }, 503);
+      if (existing) return json({ error: "该工号已注册" }, 409);
+
+      const email = "teacher-" + employeeNo + "@teachers.scores.invalid";
+      const { data: created, error: createError } = await admin.auth.admin.createUser({
         email, password, email_confirm: true,
         app_metadata: { signup_type: "teacher", full_name: fullName, employee_no: employeeNo },
       });
-      if (error || !data.user) return json({ error: "教师账号创建失败，请核对工号是否已注册" }, 400);
-      return json({ ok: true, teacher: { id: data.user.id, employee_no: employeeNo, full_name: fullName } });
+      if (createError || !created.user) return json({ error: "教师账号创建失败，请检查工号是否已注册" }, 409);
+
+      const { data: existingProfile, error: profileLookupError } = await admin.from("profiles")
+        .select("id,role,employee_no").eq("id", created.user.id).maybeSingle();
+      if (profileLookupError) {
+        await admin.auth.admin.deleteUser(created.user.id);
+        return json({ error: "教师资料创建失败，请重试" }, 503);
+      }
+      if (!existingProfile) {
+        const { error: insertError } = await admin.from("profiles").insert({
+          id: created.user.id, role: "teacher", full_name: fullName,
+          employee_no: employeeNo, must_change_password: false,
+        });
+        if (insertError) {
+          await admin.auth.admin.deleteUser(created.user.id);
+          return json({ error: "教师资料创建失败：" + insertError.message }, 400);
+        }
+      } else if (existingProfile.role !== "teacher" || existingProfile.employee_no !== employeeNo) {
+        await admin.auth.admin.deleteUser(created.user.id);
+        return json({ error: "教师资料不匹配" }, 409);
+      }
+      return json({ ok: true, teacher: { id: created.user.id, employee_no: employeeNo, full_name: fullName } });
     }
 
     if (action === "list_teachers") {
